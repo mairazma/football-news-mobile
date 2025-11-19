@@ -8,12 +8,11 @@ permissions:
   contents: write
 
 jobs:
-  releases:
-    name: Build and Release APK
+  release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -27,83 +26,25 @@ jobs:
         with:
           channel: stable
 
-      - name: Get packages
+      - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build APK (split per abi)
+      - name: Build APK split per ABI
         run: flutter build apk --split-per-abi
 
-      - name: Decode keystore from secret
-        run: |
-          echo "Decoding KEY_JKS secret to release-keystore.jks"
-          echo "${{ secrets.KEY_JKS }}" | base64 --decode > release-keystore.jks
-          ls -l release-keystore.jks
-          echo "Keystore size (bytes):"
-          stat --format="%s" release-keystore.jks || wc -c release-keystore.jks
+      # SIGNING — super simple, no chmod, no manual apksigner
+      - name: Sign APK with r0adkll/sign-android-release
+        uses: r0adkll/sign-android-release@v2
+        with:
+          releaseDirectory: build/app/outputs/flutter-apk
+          signingKeyBase64: ${{ secrets.KEY_JKS }}
+          alias: release
+          keyStorePassword: ${{ secrets.KEY_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
 
-      # Optional quick test: can we read the keystore with the provided password?
-      # This is helpful to surface wrong password early. Remove/comment this after success.
-      - name: Test keystore can be opened (debug)
-        run: |
-          echo "Running keytool -list (will be masked if secret printed)"
-          keytool -list -v -keystore release-keystore.jks -storepass "${{ secrets.KEY_PASSWORD }}" -alias release || (echo "keytool failed" && exit 1)
-
-      - name: Install Android build-tools (apksigner)
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y zipalign
-          # apksigner is packaged with build-tools; find and use the available apksigner:
-          echo "Android SDK location: $ANDROID_SDK_ROOT $ANDROID_HOME"
-          # If ANDROID_HOME not set by flutter-action, fall back:
-          if [ -z "$ANDROID_HOME" ]; then
-            export ANDROID_HOME="$HOME/Android/Sdk"
-            echo "Set ANDROID_HOME to $ANDROID_HOME"
-          fi
-          # list build-tools
-          ls -1 "$ANDROID_HOME/build-tools" || echo "no build-tools dir (flutter action should install it)"
-          # pick latest build-tools folder if exists
-          if ls "$ANDROID_HOME/build-tools" 1> /dev/null 2>&1; then
-            BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
-            echo "Using build-tools: $BUILD_TOOLS"
-            export APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
-          else
-            echo "No build-tools found, installing android-sdk-build-tools via sdkmanager"
-            yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "build-tools;33.0.2"
-            export APKSIGNER="$ANDROID_HOME/build-tools/33.0.2/apksigner"
-          fi
-          echo "apksigner path: $APKSIGNER"
-          chmod +x "$APKSIGNER"
-        shell: bash
-
-      - name: Sign APK(s) with apksigner
-        run: |
-          # ensure APKSIGNER is set (this was set in previous step)
-          if [ -z "$APKSIGNER" ]; then
-            BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
-            APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
-          fi
-          echo "Using apksigner: $APKSIGNER"
-          for apk in build/app/outputs/flutter-apk/*.apk; do
-            echo "Signing $apk ..."
-            "$APKSIGNER" sign \
-              --ks release-keystore.jks \
-              --ks-key-alias release \
-              --ks-pass pass:${{ secrets.KEY_PASSWORD }} \
-              --key-pass pass:${{ secrets.KEY_PASSWORD }} \
-              "$apk" || (echo "Signing failed for $apk" && exit 1)
-          done
-
-      - name: Verify APK signature(s)
-        run: |
-          for apk in build/app/outputs/flutter-apk/*.apk; do
-            echo "Verifying $apk ..."
-            "$APKSIGNER" verify --verbose "$apk" || (echo "Verify failed for $apk" && exit 1)
-          done
-
-      - name: Upload signed APKs as release artifact
+      - name: Upload signed APKs to Release
         uses: ncipollo/release-action@v1
         with:
-          allowUpdates: false
           artifacts: "build/app/outputs/flutter-apk/*.apk"
-          body: "Published by GitHub Actions"
           token: ${{ secrets.GITHUB_TOKEN }}
+          body: "Signed APK release"
