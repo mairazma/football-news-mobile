@@ -35,7 +35,7 @@ jobs:
 
       # --- SIGNING (clean + stable) ---
       - name: Sign APKs using r0adkll action
-        uses: r0adkll/sign-android-release@v2
+        uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: build/app/outputs/flutter-apk
           signingKeyBase64: ${{ secrets.KEY_JKS }}
