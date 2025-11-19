@@ -8,11 +8,12 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  releases:
+    name: Build and Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -26,14 +27,14 @@ jobs:
         with:
           channel: stable
 
-      - name: Flutter pub get
+      - name: Get packages
         run: flutter pub get
 
-      - name: Build APK split per ABI
+      - name: Build APK (split per abi)
         run: flutter build apk --split-per-abi
 
-      # SIGNING — super simple, no chmod, no manual apksigner
-      - name: Sign APK with r0adkll/sign-android-release
+      # --- SIGNING (clean + stable) ---
+      - name: Sign APKs using r0adkll action
         uses: r0adkll/sign-android-release@v2
         with:
           releaseDirectory: build/app/outputs/flutter-apk
@@ -42,9 +43,11 @@ jobs:
           keyStorePassword: ${{ secrets.KEY_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Upload signed APKs to Release
+      # --- UPLOAD RELEASE ---
+      - name: Upload signed APKs as release artifact
         uses: ncipollo/release-action@v1
         with:
+          allowUpdates: false
           artifacts: "build/app/outputs/flutter-apk/*.apk"
+          body: "Published by GitHub Actions"
           token: ${{ secrets.GITHUB_TOKEN }}
-          body: "Signed APK release"
